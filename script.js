@@ -12,7 +12,9 @@ const state = {
     readyToAssign: 0,
     debtViewMethod: 'snowball',
     selectedDebtId: null,
-    editingHistoricalTransactionId: null,
+    selectedCategoryId: null,
+    selectedGoalId: null,
+    editingTransactionId: null,
     fileHandle: null
 };
 
@@ -32,6 +34,19 @@ const formatCurrency = amount => new Intl.NumberFormat('en-US', {
 }).format(amount);
 
 const parseAmount = str => parseFloat(str.replace(/[^0-9.-]/g, '')) || 0;
+
+const validateInput = (value, type = 'number', required = true) => {
+    if (required && (!value || value.toString().trim() === '')) {
+        throw new Error('This field is required');
+    }
+    if (type === 'number' && isNaN(parseAmount(value))) {
+        throw new Error('Please enter a valid number');
+    }
+    if (type === 'email' && !/\S+@\S+\.\S+/.test(value)) {
+        throw new Error('Please enter a valid email');
+    }
+    return true;
+};
 
 // --- DATABASE OPERATIONS ---
 const db = {
@@ -94,6 +109,20 @@ const fileOps = {
         }
     },
 
+    async chooseExisting() {
+        try {
+            const [fileHandle] = await window.showOpenFilePicker({
+                types: [{ description: 'JSON Files', accept: { 'application/json': ['.json'] } }]
+            });
+            state.fileHandle = fileHandle;
+            await db.saveHandle(fileHandle);
+            return await this.read();
+        } catch (error) {
+            showErrorModal("File selection cancelled.");
+            return null;
+        }
+    },
+
     async read() {
         if (!state.fileHandle) return { monthlyBudgets: {}, debtList: [], goals: [], categories: {}, readyToAssign: 0 };
         try {
@@ -122,6 +151,29 @@ const fileOps = {
             } else {
                 showErrorModal("Could not save data.");
             }
+        }
+    },
+
+    async export() {
+        try {
+            const handle = await window.showSaveFilePicker({
+                suggestedName: `budget-export-${format(new Date(), 'yyyy-MM-dd')}.json`,
+                types: [{ description: 'JSON Files', accept: { 'application/json': ['.json'] } }]
+            });
+            const data = {
+                monthlyBudgets: state.budgets,
+                debtList: state.debtList,
+                goals: state.goals,
+                categories: state.categories,
+                readyToAssign: state.readyToAssign,
+                exportDate: new Date().toISOString()
+            };
+            const writable = await handle.createWritable();
+            await writable.write(JSON.stringify(data, null, 2));
+            await writable.close();
+            showSuccessMessage('Data exported successfully!');
+        } catch (error) {
+            showErrorModal('Export cancelled or failed.');
         }
     }
 };
@@ -152,6 +204,7 @@ const dataManager = {
         });
 
         this.ensureCurrentMonth();
+        this.migrateData();
         ui.updateAll();
     },
 
@@ -159,6 +212,22 @@ const dataManager = {
         if (!state.budgets[state.currentMonth]) {
             state.budgets[state.currentMonth] = { categories: {}, transactions: [] };
         }
+    },
+
+    // Migrate old data format to new format
+    migrateData() {
+        Object.keys(state.budgets).forEach(monthKey => {
+            const monthBudget = state.budgets[monthKey];
+            if (!monthBudget.transactions) {
+                monthBudget.transactions = [];
+            }
+            // Ensure all categories have required fields
+            Object.values(monthBudget.categories || {}).forEach(category => {
+                if (typeof category.available === 'undefined') {
+                    category.available = category.budgeted + (category.activity || 0);
+                }
+            });
+        });
     }
 };
 
@@ -169,45 +238,64 @@ const budget = {
     },
 
     addCategory(name, budgetedAmount = 0) {
-        const budget = this.getCurrentBudget();
-        const categoryId = uuidv4();
-        
-        budget.categories[categoryId] = {
-            id: categoryId,
-            name,
-            budgeted: budgetedAmount,
-            activity: 0,
-            available: budgetedAmount
-        };
+        try {
+            validateInput(name, 'string');
+            validateInput(budgetedAmount, 'number', false);
+            
+            const budget = this.getCurrentBudget();
+            const categoryId = uuidv4();
+            const amount = parseAmount(budgetedAmount);
+            
+            budget.categories[categoryId] = {
+                id: categoryId,
+                name: name.trim(),
+                budgeted: amount,
+                activity: 0,
+                available: amount
+            };
 
-        state.categories[categoryId] = { id: categoryId, name };
-        state.readyToAssign -= budgetedAmount;
-        
-        dataManager.save();
-        ui.updateAll();
+            state.categories[categoryId] = { id: categoryId, name: name.trim() };
+            state.readyToAssign -= amount;
+            
+            dataManager.save();
+            ui.updateAll();
+            showSuccessMessage(`Category "${name}" added successfully!`);
+        } catch (error) {
+            showErrorModal(error.message);
+        }
     },
 
     updateCategory(categoryId, field, value) {
-        const budget = this.getCurrentBudget();
-        const category = budget.categories[categoryId];
-        
-        if (!category) return;
+        try {
+            validateInput(value, 'number');
+            
+            const budget = this.getCurrentBudget();
+            const category = budget.categories[categoryId];
+            
+            if (!category) throw new Error('Category not found');
 
-        const oldValue = category[field];
-        category[field] = parseAmount(value);
-        
-        if (field === 'budgeted') {
-            const difference = category.budgeted - oldValue;
-            state.readyToAssign -= difference;
-            category.available = category.budgeted + category.activity;
+            const oldValue = category[field];
+            category[field] = parseAmount(value);
+            
+            if (field === 'budgeted') {
+                const difference = category.budgeted - oldValue;
+                state.readyToAssign -= difference;
+                category.available = category.budgeted + category.activity;
+            }
+
+            dataManager.save();
+            ui.updateBudgetTable();
+            ui.updateReadyToAssign();
+        } catch (error) {
+            showErrorModal(error.message);
         }
-
-        dataManager.save();
-        ui.updateBudgetTable();
-        ui.updateReadyToAssign();
     },
 
     deleteCategory(categoryId) {
+        if (!confirm('Are you sure you want to delete this category? This will also delete all associated transactions.')) {
+            return;
+        }
+
         const budget = this.getCurrentBudget();
         const category = budget.categories[categoryId];
         
@@ -215,67 +303,178 @@ const budget = {
             state.readyToAssign += category.budgeted;
             delete budget.categories[categoryId];
             delete state.categories[categoryId];
+            
+            // Remove associated transactions
+            budget.transactions = budget.transactions.filter(t => t.categoryId !== categoryId);
         }
 
         dataManager.save();
         ui.updateAll();
+        showSuccessMessage('Category deleted successfully!');
     },
 
     addTransaction(categoryId, description, amount) {
-        const budget = this.getCurrentBudget();
-        const category = budget.categories[categoryId];
+        try {
+            validateInput(description, 'string');
+            validateInput(amount, 'number');
+            
+            const budget = this.getCurrentBudget();
+            const category = budget.categories[categoryId];
+            
+            if (!category) throw new Error('Category not found');
+
+            const transaction = {
+                id: uuidv4(),
+                categoryId,
+                description: description.trim(),
+                amount: parseAmount(amount),
+                date: new Date().toISOString()
+            };
+
+            budget.transactions.push(transaction);
+            category.activity += transaction.amount;
+            category.available = category.budgeted + category.activity;
+
+            dataManager.save();
+            ui.updateAll();
+            ui.closeModal('transaction-modal');
+            showSuccessMessage('Transaction added successfully!');
+        } catch (error) {
+            showErrorModal(error.message);
+        }
+    },
+
+    editTransaction(transactionId, description, amount) {
+        try {
+            validateInput(description, 'string');
+            validateInput(amount, 'number');
+            
+            const budget = this.getCurrentBudget();
+            const transaction = budget.transactions.find(t => t.id === transactionId);
+            if (!transaction) throw new Error('Transaction not found');
+            
+            const category = budget.categories[transaction.categoryId];
+            category.activity -= transaction.amount; // Remove old amount
+            
+            transaction.amount = parseAmount(amount);
+            transaction.description = description.trim();
+            
+            category.activity += transaction.amount; // Add new amount
+            category.available = category.budgeted + category.activity;
+            
+            dataManager.save();
+            ui.updateAll();
+            ui.closeModal('edit-transaction-modal');
+            showSuccessMessage('Transaction updated successfully!');
+        } catch (error) {
+            showErrorModal(error.message);
+        }
+    },
+
+    deleteTransaction(transactionId) {
+        if (!confirm('Are you sure you want to delete this transaction?')) return;
         
-        if (!category) return;
-
-        const transaction = {
-            id: uuidv4(),
-            categoryId,
-            description,
-            amount: parseAmount(amount),
-            date: new Date().toISOString()
-        };
-
-        budget.transactions.push(transaction);
-        category.activity += transaction.amount;
+        const budget = this.getCurrentBudget();
+        const transactionIndex = budget.transactions.findIndex(t => t.id === transactionId);
+        if (transactionIndex === -1) return;
+        
+        const transaction = budget.transactions[transactionIndex];
+        const category = budget.categories[transaction.categoryId];
+        
+        category.activity -= transaction.amount;
         category.available = category.budgeted + category.activity;
-
+        
+        budget.transactions.splice(transactionIndex, 1);
+        
         dataManager.save();
         ui.updateAll();
+        showSuccessMessage('Transaction deleted successfully!');
+    },
+
+    getTransactionHistory(categoryId) {
+        const budget = this.getCurrentBudget();
+        return budget.transactions
+            .filter(t => t.categoryId === categoryId)
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+    },
+
+    getAllTransactions() {
+        const budget = this.getCurrentBudget();
+        return budget.transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
     }
 };
 
 // --- DEBT OPERATIONS ---
 const debt = {
     add(name, balance, minPayment, interestRate) {
-        const debtItem = {
-            id: uuidv4(),
-            name,
-            balance: parseAmount(balance),
-            minPayment: parseAmount(minPayment),
-            interestRate: parseFloat(interestRate) || 0,
-            payments: []
-        };
+        try {
+            validateInput(name, 'string');
+            validateInput(balance, 'number');
+            validateInput(minPayment, 'number');
+            validateInput(interestRate, 'number', false);
+            
+            const debtItem = {
+                id: uuidv4(),
+                name: name.trim(),
+                balance: parseAmount(balance),
+                minPayment: parseAmount(minPayment),
+                interestRate: parseFloat(interestRate) || 0,
+                payments: []
+            };
 
-        state.debtList.push(debtItem);
-        dataManager.save();
-        ui.updateDebtTable();
+            state.debtList.push(debtItem);
+            dataManager.save();
+            ui.updateDebtTable();
+            showSuccessMessage(`Debt "${name}" added successfully!`);
+        } catch (error) {
+            showErrorModal(error.message);
+        }
     },
 
     addPayment(debtId, amount, date = new Date()) {
-        const debtItem = state.debtList.find(d => d.id === debtId);
-        if (!debtItem) return;
+        try {
+            validateInput(amount, 'number');
+            
+            const debtItem = state.debtList.find(d => d.id === debtId);
+            if (!debtItem) throw new Error('Debt not found');
 
-        const payment = {
-            id: uuidv4(),
-            amount: parseAmount(amount),
-            date: date.toISOString()
-        };
+            const paymentAmount = parseAmount(amount);
+            if (paymentAmount > debtItem.balance) {
+                if (!confirm(`Payment amount (${formatCurrency(paymentAmount)}) is greater than remaining balance (${formatCurrency(debtItem.balance)}). Continue?`)) {
+                    return;
+                }
+            }
 
-        debtItem.payments.push(payment);
-        debtItem.balance -= payment.amount;
+            const payment = {
+                id: uuidv4(),
+                amount: paymentAmount,
+                date: date.toISOString()
+            };
 
-        dataManager.save();
-        ui.updateDebtTable();
+            debtItem.payments.push(payment);
+            debtItem.balance = Math.max(0, debtItem.balance - payment.amount);
+
+            dataManager.save();
+            ui.updateDebtTable();
+            ui.closeModal('payment-modal');
+            showSuccessMessage('Payment added successfully!');
+        } catch (error) {
+            showErrorModal(error.message);
+        }
+    },
+
+    deleteDebt(debtId) {
+        if (!confirm('Are you sure you want to delete this debt? This will also delete all payment history.')) {
+            return;
+        }
+        
+        const index = state.debtList.findIndex(d => d.id === debtId);
+        if (index !== -1) {
+            state.debtList.splice(index, 1);
+            dataManager.save();
+            ui.updateDebtTable();
+            showSuccessMessage('Debt deleted successfully!');
+        }
     },
 
     getSortedDebts() {
@@ -284,41 +483,100 @@ const debt = {
                 ? a.balance - b.balance 
                 : b.interestRate - a.interestRate;
         });
+    },
+
+    getPaymentHistory(debtId) {
+        const debtItem = state.debtList.find(d => d.id === debtId);
+        return debtItem ? debtItem.payments.sort((a, b) => new Date(b.date) - new Date(a.date)) : [];
+    },
+
+    getTotalDebt() {
+        return state.debtList.reduce((total, debt) => total + debt.balance, 0);
+    },
+
+    getTotalMinPayments() {
+        return state.debtList.reduce((total, debt) => total + debt.minPayment, 0);
     }
 };
 
 // --- GOALS OPERATIONS ---
 const goals = {
     add(name, targetAmount, targetDate) {
-        const goal = {
-            id: uuidv4(),
-            name,
-            targetAmount: parseAmount(targetAmount),
-            targetDate,
-            currentAmount: 0,
-            contributions: []
-        };
+        try {
+            validateInput(name, 'string');
+            validateInput(targetAmount, 'number');
+            validateInput(targetDate, 'string');
+            
+            const goal = {
+                id: uuidv4(),
+                name: name.trim(),
+                targetAmount: parseAmount(targetAmount),
+                targetDate,
+                currentAmount: 0,
+                contributions: []
+            };
 
-        state.goals.push(goal);
-        dataManager.save();
-        ui.updateGoalsTable();
+            state.goals.push(goal);
+            dataManager.save();
+            ui.updateGoalsTable();
+            showSuccessMessage(`Goal "${name}" added successfully!`);
+        } catch (error) {
+            showErrorModal(error.message);
+        }
     },
 
     addContribution(goalId, amount) {
+        try {
+            validateInput(amount, 'number');
+            
+            const goal = state.goals.find(g => g.id === goalId);
+            if (!goal) throw new Error('Goal not found');
+
+            const contribution = {
+                id: uuidv4(),
+                amount: parseAmount(amount),
+                date: new Date().toISOString()
+            };
+
+            goal.contributions.push(contribution);
+            goal.currentAmount += contribution.amount;
+
+            dataManager.save();
+            ui.updateGoalsTable();
+            ui.closeModal('contribution-modal');
+            showSuccessMessage('Contribution added successfully!');
+        } catch (error) {
+            showErrorModal(error.message);
+        }
+    },
+
+    deleteGoal(goalId) {
+        if (!confirm('Are you sure you want to delete this goal? This will also delete all contribution history.')) {
+            return;
+        }
+        
+        const index = state.goals.findIndex(g => g.id === goalId);
+        if (index !== -1) {
+            state.goals.splice(index, 1);
+            dataManager.save();
+            ui.updateGoalsTable();
+            showSuccessMessage('Goal deleted successfully!');
+        }
+    },
+
+    getMonthlyContributionNeeded(goalId) {
         const goal = state.goals.find(g => g.id === goalId);
-        if (!goal) return;
+        if (!goal) return 0;
+        
+        const remaining = goal.targetAmount - goal.currentAmount;
+        const monthsLeft = differenceInCalendarMonths(parseISO(goal.targetDate), new Date());
+        
+        return monthsLeft > 0 ? remaining / monthsLeft : remaining;
+    },
 
-        const contribution = {
-            id: uuidv4(),
-            amount: parseAmount(amount),
-            date: new Date().toISOString()
-        };
-
-        goal.contributions.push(contribution);
-        goal.currentAmount += contribution.amount;
-
-        dataManager.save();
-        ui.updateGoalsTable();
+    getContributionHistory(goalId) {
+        const goal = state.goals.find(g => g.id === goalId);
+        return goal ? goal.contributions.sort((a, b) => new Date(b.date) - new Date(a.date)) : [];
     }
 };
 
@@ -330,6 +588,7 @@ const ui = {
         this.updateDebtTable();
         this.updateGoalsTable();
         this.updateMonthDisplay();
+        this.updateSummaryStats();
     },
 
     updateReadyToAssign() {
@@ -347,20 +606,34 @@ const ui = {
         }
     },
 
+    updateSummaryStats() {
+        const totalBudgeted = Object.values(budget.getCurrentBudget().categories || {})
+            .reduce((sum, cat) => sum + cat.budgeted, 0);
+        const totalActivity = Object.values(budget.getCurrentBudget().categories || {})
+            .reduce((sum, cat) => sum + cat.activity, 0);
+        
+        const budgetedEl = $('total-budgeted');
+        const activityEl = $('total-activity');
+        
+        if (budgetedEl) budgetedEl.textContent = formatCurrency(totalBudgeted);
+        if (activityEl) activityEl.textContent = formatCurrency(totalActivity);
+    },
+
     updateBudgetTable() {
         const tbody = $('budget-table-body');
         if (!tbody) return;
 
-        const budget = state.budgets[state.currentMonth] || { categories: {} };
+        const currentBudget = budget.getCurrentBudget();
         tbody.innerHTML = '';
 
-        Object.values(budget.categories).forEach(category => {
+        Object.values(currentBudget.categories).forEach(category => {
             const row = createElement('tr', {}, [
                 createElement('td', {}, [category.name]),
                 createElement('td', {}, [
                     createElement('input', {
                         type: 'number',
                         value: category.budgeted,
+                        step: '0.01',
                         onchange: e => budget.updateCategory(category.id, 'budgeted', e.target.value)
                     })
                 ]),
@@ -370,10 +643,16 @@ const ui = {
                 ]),
                 createElement('td', {}, [
                     createElement('button', {
-                        onclick: () => this.showTransactionModal(category.id)
+                        onclick: () => this.showTransactionModal(category.id),
+                        className: 'btn-primary'
                     }, ['Add Transaction']),
                     createElement('button', {
-                        onclick: () => budget.deleteCategory(category.id)
+                        onclick: () => this.showTransactionHistory(category.id),
+                        className: 'btn-secondary'
+                    }, ['History']),
+                    createElement('button', {
+                        onclick: () => budget.deleteCategory(category.id),
+                        className: 'btn-danger'
                     }, ['Delete'])
                 ])
             ]);
@@ -388,14 +667,25 @@ const ui = {
         tbody.innerHTML = '';
         debt.getSortedDebts().forEach((debtItem, index) => {
             const row = createElement('tr', {}, [
-                createElement('td', {}, [debtItem.name]),
+                createElement('td', {}, [
+                    createElement('span', {}, [`${index + 1}. ${debtItem.name}`])
+                ]),
                 createElement('td', {}, [formatCurrency(debtItem.balance)]),
                 createElement('td', {}, [formatCurrency(debtItem.minPayment)]),
                 createElement('td', {}, [`${debtItem.interestRate}%`]),
                 createElement('td', {}, [
                     createElement('button', {
-                        onclick: () => this.showPaymentModal(debtItem.id)
-                    }, ['Add Payment'])
+                        onclick: () => this.showPaymentModal(debtItem.id),
+                        className: 'btn-primary'
+                    }, ['Add Payment']),
+                    createElement('button', {
+                        onclick: () => this.showPaymentHistory(debtItem.id),
+                        className: 'btn-secondary'
+                    }, ['History']),
+                    createElement('button', {
+                        onclick: () => debt.deleteDebt(debtItem.id),
+                        className: 'btn-danger'
+                    }, ['Delete'])
                 ])
             ]);
             tbody.appendChild(row);
@@ -409,16 +699,35 @@ const ui = {
         tbody.innerHTML = '';
         state.goals.forEach(goal => {
             const progress = (goal.currentAmount / goal.targetAmount) * 100;
+            const monthlyNeeded = goals.getMonthlyContributionNeeded(goal.id);
+            
             const row = createElement('tr', {}, [
                 createElement('td', {}, [goal.name]),
                 createElement('td', {}, [formatCurrency(goal.targetAmount)]),
                 createElement('td', {}, [formatCurrency(goal.currentAmount)]),
-                createElement('td', {}, [`${progress.toFixed(1)}%`]),
+                createElement('td', {}, [
+                    createElement('div', { className: 'progress-bar' }, [
+                        createElement('div', { 
+                            className: 'progress-fill',
+                            style: `width: ${Math.min(progress, 100)}%`
+                        }, [`${progress.toFixed(1)}%`])
+                    ])
+                ]),
                 createElement('td', {}, [format(parseISO(goal.targetDate), 'MMM dd, yyyy')]),
+                createElement('td', {}, [formatCurrency(monthlyNeeded)]),
                 createElement('td', {}, [
                     createElement('button', {
-                        onclick: () => this.showContributionModal(goal.id)
-                    }, ['Add Contribution'])
+                        onclick: () => this.showContributionModal(goal.id),
+                        className: 'btn-primary'
+                    }, ['Add Contribution']),
+                    createElement('button', {
+                        onclick: () => this.showContributionHistory(goal.id),
+                        className: 'btn-secondary'
+                    }, ['History']),
+                    createElement('button', {
+                        onclick: () => goals.deleteGoal(goal.id),
+                        className: 'btn-danger'
+                    }, ['Delete'])
                 ])
             ]);
             tbody.appendChild(row);
@@ -428,17 +737,79 @@ const ui = {
     // Modal operations
     showTransactionModal(categoryId) {
         state.selectedCategoryId = categoryId;
+        const category = budget.getCurrentBudget().categories[categoryId];
+        $('transaction-category-name').textContent = category?.name || 'Unknown';
         $('transaction-modal').style.display = 'block';
+        $('transaction-description').focus();
     },
 
     showPaymentModal(debtId) {
         state.selectedDebtId = debtId;
+        const debtItem = state.debtList.find(d => d.id === debtId);
+        $('payment-debt-name').textContent = debtItem?.name || 'Unknown';
         $('payment-modal').style.display = 'block';
+        $('payment-amount').focus();
     },
 
     showContributionModal(goalId) {
         state.selectedGoalId = goalId;
+        const goal = state.goals.find(g => g.id === goalId);
+        $('contribution-goal-name').textContent = goal?.name || 'Unknown';
         $('contribution-modal').style.display = 'block';
+        $('contribution-amount').focus();
+    },
+
+    showTransactionHistory(categoryId) {
+        const transactions = budget.getTransactionHistory(categoryId);
+        const category = budget.getCurrentBudget().categories[categoryId];
+        
+        $('history-title').textContent = `Transaction History - ${category.name}`;
+        const tbody = $('history-table-body');
+        tbody.innerHTML = '';
+        
+        transactions.forEach(transaction => {
+            const row = createElement('tr', {}, [
+                createElement('td', {}, [format(parseISO(transaction.date), 'MMM dd, yyyy')]),
+                createElement('td', {}, [transaction.description]),
+                createElement('td', { className: transaction.amount >= 0 ? 'positive' : 'negative' }, [
+                    formatCurrency(transaction.amount)
+                ]),
+                createElement('td', {}, [
+                    createElement('button', {
+                        onclick: () => this.showEditTransactionModal(transaction.id),
+                        className: 'btn-secondary'
+                    }, ['Edit']),
+                    createElement('button', {
+                        onclick: () => budget.deleteTransaction(transaction.id),
+                        className: 'btn-danger'
+                    }, ['Delete'])
+                ])
+            ]);
+            tbody.appendChild(row);
+        });
+        
+        $('history-modal').style.display = 'block';
+    },
+
+    showEditTransactionModal(transactionId) {
+        const transaction = budget.getAllTransactions().find(t => t.id === transactionId);
+        if (!transaction) return;
+        
+        state.editingTransactionId = transactionId;
+        $('edit-transaction-description').value = transaction.description;
+        $('edit-transaction-amount').value = transaction.amount;
+        $('edit-transaction-modal').style.display = 'block';
+        this.closeModal('history-modal');
+    },
+
+    closeModal(modalId) {
+        const modal = $(modalId);
+        if (modal) {
+            modal.style.display = 'none';
+            // Clear form data
+            const forms = modal.querySelectorAll('form');
+            forms.forEach(form => form.reset());
+        }
     }
 };
 
@@ -453,6 +824,19 @@ const handlers = {
         $('new-file-btn')?.addEventListener('click', async () => {
             await fileOps.chooseNew();
             await dataManager.load();
+        });
+        
+        $('open-file-btn')?.addEventListener('click', async () => {
+            const data = await fileOps.chooseExisting();
+            if (data) await dataManager.load();
+        });
+        
+        $('export-btn')?.addEventListener('click', () => fileOps.export());
+
+        // Debt view toggle
+        $('debt-view-toggle')?.addEventListener('change', e => {
+            state.debtViewMethod = e.target.value;
+            ui.updateDebtTable();
         });
 
         // Add forms
@@ -475,17 +859,71 @@ const handlers = {
             e.target.reset();
         });
 
+        $('add-goal-form')?.addEventListener('submit', e => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            goals.add(
+                formData.get('name'),
+                formData.get('targetAmount'),
+                formData.get('targetDate')
+            );
+            e.target.reset();
+        });
+
+        // Modal forms
+        $('transaction-form')?.addEventListener('submit', e => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            budget.addTransaction(
+                state.selectedCategoryId,
+                formData.get('description'),
+                formData.get('amount')
+            );
+        });
+
+        $('payment-form')?.addEventListener('submit', e => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            debt.addPayment(state.selectedDebtId, formData.get('amount'));
+        });
+
+        $('contribution-form')?.addEventListener('submit', e => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            goals.addContribution(state.selectedGoalId, formData.get('amount'));
+        });
+
+        $('edit-transaction-form')?.addEventListener('submit', e => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            budget.editTransaction(
+                state.editingTransactionId,
+                formData.get('description'),
+                formData.get('amount')
+            );
+        });
+
         // Modal handlers
         $$('.modal .close').forEach(closeBtn => {
             closeBtn.addEventListener('click', e => {
-                e.target.closest('.modal').style.display = 'none';
+                const modal = e.target.closest('.modal');
+                this.closeModal(modal.id);
             });
         });
 
         // Click outside modal to close
         window.addEventListener('click', e => {
             if (e.target.classList.contains('modal')) {
-                e.target.style.display = 'none';
+                ui.closeModal(e.target.id);
+            }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                $$('.modal[style*="block"]').forEach(modal => {
+                    ui.closeModal(modal.id);
+                });
             }
         });
     },
@@ -499,7 +937,7 @@ const handlers = {
     }
 };
 
-// --- ERROR HANDLING ---
+// --- NOTIFICATION SYSTEM ---
 function showErrorModal(message) {
     const modal = $('error-modal');
     const messageEl = $('error-message');
@@ -511,8 +949,27 @@ function showErrorModal(message) {
     }
 }
 
+function showSuccessMessage(message) {
+    const notification = createElement('div', {
+        className: 'success-notification',
+        textContent: message
+    });
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.classList.add('fade-out');
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
+
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
     handlers.init();
     await dataManager.load();
 });
+
+// --- EXPORT FOR TESTING ---
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { budget, debt, goals, dataManager, formatCurrency, parseAmount };
+}
