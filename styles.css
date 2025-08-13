@@ -1,1 +1,326 @@
+/* General body and typography styles */
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: #f3f4f6;
+    margin: 0;
+    padding: 24px;
+}
+
+/* Main app container */
+.app-container {
+    max-width: 960px;
+    margin: 0 auto;
+    background-color: #fff;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    border-radius: 16px;
+    padding: 32px;
+}
+
+/* Month navigation header */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    gap: 8px;
+}
+
+.header h1 {
+    font-size: 32px;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0;
+    flex-grow: 1;
+    text-align: center;
+}
+
+/* Ready to assign section */
+.ready-to-assign {
+    background-color: #d1fae5;
+    padding: 16px;
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.ready-to-assign h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #065f46;
+    margin: 0;
+}
+
+.ready-to-assign .amount {
+    font-size: 24px;
+    font-weight: 700;
+    color: #047857;
+    margin: 0;
+}
+
+/* Button styles */
+button {
+    padding: 12px 20px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background-color 0.2s ease;
+}
+
+.btn-gray {
+    background-color: #e5e7eb;
+    color: #374151;
+}
+
+.btn-gray:hover {
+    background-color: #d1d5db;
+}
+
+.btn-primary {
+    background-color: #4f46e5;
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background-color: #4338ca;
+}
+
+.btn-green {
+    background-color: #10b981;
+    color: #fff;
+}
+
+.btn-green:hover {
+    background-color: #059669;
+}
+
+.btn-red {
+    background-color: #ef4444;
+    color: #fff;
+}
+
+.btn-red:hover {
+    background-color: #dc2626;
+}
+
+.btn-secondary {
+    background-color: #f3f4f6;
+    color: #4b5563;
+}
+
+.btn-secondary.active {
+    background-color: #4f46e5;
+    color: #fff;
+}
+
+/* Group of buttons */
+.btn-group {
+    display: flex;
+    gap: 8px;
+}
+
+/* Form/input styles */
+.form-section {
+    padding: 24px;
+    background-color: #f9fafb;
+    border-radius: 8px;
+    box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);
+    margin-top: 32px;
+}
+
+.form-section h2 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #1f2937;
+    margin-bottom: 16px;
+}
+
+.form-section .input-group {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.form-section input, .form-section select, .form-section textarea {
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    flex-grow: 1;
+}
+
+.form-section textarea {
+    min-height: 120px;
+    resize: vertical;
+}
+
+/* Budget and Debt table */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 24px;
+}
+
+.data-table thead tr {
+    background-color: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.data-table th, .data-table td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.data-table th {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b7280;
+}
+
+.data-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Section Header styles */
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.section-header h2 {
+    margin: 0;
+}
+
+/* Reports section specific styles */
+.reports-section, .historical-data-section {
+    display: none;
+}
+
+.reports-grid {
+    display: grid;
+    gap: 32px;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.chart-card {
+    background-color: #f9fafb;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.chart-card h3 {
+    margin-top: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1f2937;
+}
+
+/* Historical data section styles */
+.historical-data-section {
+    margin-top: 24px;
+}
+
+.historical-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.historical-header h2 {
+    margin: 0;
+}
+
+/* Modals and overlays */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 100;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.5);
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-content {
+    background-color: #fff;
+    padding: 24px;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    position: relative;
+}
+
+.modal-header h3 {
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0 0 8px 0;
+}
+
+.modal-header p {
+    font-size: 14px;
+    color: #6b7280;
+    margin: 0 0 16px 0;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
+}
+
+.modal-footer button {
+    margin-left: 8px;
+}
+
+/* Loading overlay */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.8);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 200;
+}
+
+.loading-overlay p {
+    font-size: 20px;
+    font-weight: 600;
+    color: #1f2937;
+    text-align: center;
+}
+
+hr {
+    margin: 40px 0;
+    border: none;
+    border-top: 1px dashed #e5e7eb;
+}
+
+/* Parent category styling for persistent categories */
+.parent-category-row {
+    background-color: #f8f9fa !important;
+}
+
+.parent-category-row td {
+    font-weight: bold;
+    font-size: 1.1em;
+    border-top: 2px solid #dee2e6;
+}
 
